@@ -32,11 +32,11 @@ int upperLimit = 923;
 bool leftRightMotion = false;
 
 // Steps from opened to closed
-int stepLimit[2] = {18977, 19327};
+int stepLimit[2] = {18800, 19145};
 int steps[2] = {0, 0};
 
 // rate of travel (inverse)
-int speed = 200;
+int speed = 50;
 
 // Testing values
 int selectedDoor = 0;
@@ -64,12 +64,12 @@ void setDirection(int door)
 {
   if (opening[door])
   {
-    Serial.println(doorName[door] + " setDirection, opening");
+    // Serial.println(doorName[door] + " setDirection, opening");
     digitalWrite(dirPin[door], doorOpening[door]);
   }
   else
   {
-    Serial.println(doorName[door] + "setDirection, closing");
+    // Serial.println(doorName[door] + "setDirection, closing");
     digitalWrite(dirPin[door], doorClosing[door]);
   }
 }
@@ -83,6 +83,7 @@ void moveDoor(int door)
 {
   if (state[door] == MOVING)
   {
+    position[door] = AJAR;
     digitalWrite(pulsePin[door], HIGH);
     delayMicroseconds(speed);
     digitalWrite(pulsePin[door], LOW);
@@ -277,8 +278,16 @@ void setup()
 
 void handleJoystick()
 {
+  static int counter = 0;
   const int upDown = analogRead(upDownPin);
   const int leftRight = analogRead(leftRightPin);
+
+  if (counter++ % 3000 == 0)
+  {
+    // Serial.println(String("JS: ") + String(upDown) + String(" ") + String(leftRight));
+    // Serial.println(String("ST: ") + String(steps[0]) + String("/") + String(steps[1]));
+  }
+
   if (upDown > upperLimit)
   {
     if (position[0] != OPENED)
@@ -310,7 +319,7 @@ void handleJoystick()
   {
     if (position[0] != CLOSED)
     {
-      opening[0] = opening[1] = true;
+      opening[0] = opening[1] = false;
       state[0] = state[1] = MOVING;
       leftRightMotion = true;
     }
@@ -320,6 +329,9 @@ void handleJoystick()
     state[0] = state[1] = STOPPED;
     leftRightMotion = false;
   }
+
+  setDirection(0);
+  setDirection(1);
 }
 
 void doLive()
