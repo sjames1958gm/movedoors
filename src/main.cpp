@@ -326,7 +326,7 @@ void doLive()
 {
   // read sensor
   // transition between moving and stopped
-  // handleJoystick();
+  handleJoystick();
   moveDoor(0);
   moveDoor(1);
 }
