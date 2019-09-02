@@ -1,4 +1,14 @@
 #include <Arduino.h>
+#include <WebServer.h>
+#include <WiFi.h>
+
+String Version("Sep 1 2019");
+
+const char *ssid = "MySpectrumWiFief-2G";
+const char *password = "statuedegree702";
+
+// Create the Web Server listening on port 80 (http)
+WebServer server(80);
 
 // Door names
 String doorName[2] = {"right", "left"};
@@ -17,41 +27,105 @@ bool opening[2] = {true, true};
 bool backingOff[2] = {false, false};
 
 // PWM pins and values for opening / closing
-int pulsePin[2] = {9, 10};
+// int pulsePin[2] = {9, 10};
+int pulsePin[2] = {32, 33};
 int doorOpening[2] = {HIGH, LOW};
 int doorClosing[2] = {LOW, HIGH};
 // Motor direction pins
-int dirPin[2] = {2, 3};
+int dirPin[2] = {25, 26};
 // Limit switch read pins
-int limitOpenPin[2] = {4, 5};
+int limitOpenPin[2] = {34, 35};
 // joystick pins
-int upDownPin = 0;
-int leftRightPin = 1;
+// int upDownPin = 14;
+// int leftRightPin = 27;
+int upDownPin = 39;
+int leftRightPin = 36;
 int lowerLimit = 100;
-int upperLimit = 923;
+int upperLimit = 3692;
 bool leftRightMotion = false;
 
 // Steps from opened to closed
-int stepLimit[2] = {18800, 19145};
+int stepLimit[2] = {18900, 18900};
 int steps[2] = {0, 0};
 
 // rate of travel (inverse)
-int speed = 50;
+int rates[] = {8, 6, 4, 4, 2, 2, 1, 1, 1, 1};
+int speed = 25;
 
 // Testing values
 int selectedDoor = 0;
 bool testMode = false;
 bool dualMode = false;
 
-void displayStatus()
+String displayStatus();
+String openDoors();
+String closeDoors();
+
+String positionToString(int position)
 {
-  Serial.println(String("Selected door is: ") + doorName[selectedDoor]);
+  switch (position)
+  {
+  case OPENED:
+    return String("OPENED");
+  case CLOSED:
+    return String("CLOSED");
+  case AJAR:
+    return String("AJAR");
+  }
+  return String("???");
+}
+
+void handleRoot()
+{
+  server.send(200, "text/plain", String("ESP32: ") + String(Version));
+}
+
+void handleStatus()
+{
+  server.send(200, "text/plain", displayStatus());
+}
+
+void handleOpen()
+{
+  if (position[0] != OPENED)
+  {
+    opening[0] = opening[1] = true;
+    state[0] = state[1] = MOVING;
+  }
+  server.send(200, "text/plain", displayStatus());
+}
+
+void handleClose()
+{
+  if (position[0] != CLOSED)
+  {
+    opening[0] = opening[1] = false;
+    state[0] = state[1] = MOVING;
+  }
+  server.send(200, "text/plain", displayStatus());
+}
+
+void handleNotFound()
+{
+  server.send(404, "application/json", "{\"message\": \"Not Found\"}");
+}
+
+String displayStatus()
+{
+  String status = String("Selected door is: ") + doorName[selectedDoor] + "\n";
+
   for (int i = 0; i < 2; i++)
   {
-    Serial.print(doorName[i] + String(" is "));
-    Serial.print(String(state[i] == MOVING ? "MOVING" : "STOPPED"));
-    Serial.println(String(", ") + String(opening[i] ? "OPENING" : "CLOSING"));
+    status += doorName[i];
+    status += String(" is ") + String(state[i] == MOVING ? "MOVING" : "STOPPED");
+    status += String(", ") + String(positionToString(position[i]));
+    status += String(", ") + String(opening[i] ? "OPENING" : "CLOSING");
+    status += String(", Steps: ") + String(steps[i]);
+    status += "\n";
   }
+
+  Serial.println(status);
+  return status;
 }
 
 void stopDoor(int door)
@@ -79,15 +153,46 @@ bool isLimitSwitchOpen(int door)
   return digitalRead(limitOpenPin[door]) == LOW;
 }
 
+int getSpeed(int door)
+{
+  // int entries = 10;
+  // static int c = 0;
+  // double slo2 = stepLimit[door] / 2.0;
+  // double sd = steps[door];
+  // int rateIndex = 0;
+  // if (!opening[door])
+  // {
+  //   if (sd < slo2)
+  //   {
+  //     rateIndex = (sd / slo2) * entries;
+  //   }
+  //   else
+  //   {
+  //     rateIndex = (entries - 1) - (((sd - slo2) / slo2) * entries);
+  //   }
+  //   return rates[rateIndex] * speed;
+  // }
+
+  if (opening[door] && (steps[door] < 500 || steps[door] > stepLimit[door] - 500))
+  {
+    return speed * 8;
+  }
+  else if (!opening[door] && (steps[door] < 1000 || steps[door] > stepLimit[door] - 1000))
+  {
+    return speed * 4;
+  }
+  return speed;
+}
+
 void moveDoor(int door)
 {
   if (state[door] == MOVING)
   {
     position[door] = AJAR;
     digitalWrite(pulsePin[door], HIGH);
-    delayMicroseconds(speed);
+    delayMicroseconds(getSpeed(door));
     digitalWrite(pulsePin[door], LOW);
-    delayMicroseconds(speed);
+    delayMicroseconds(getSpeed(door));
 
     steps[door] += opening[door] ? -1 : 1;
     if (backingOff[door])
@@ -141,7 +246,7 @@ void getJobMenu()
 
 void doJobs()
 {
-  int jobNumber;
+  int jobNumber = 0;
   getJobMenu();
   bool done = false;
   while (!done)
@@ -164,7 +269,7 @@ void doJobs()
       jobNumber = Serial.parseInt();
       if (Serial.read() != '\n')
       {
-        // Serial.println("going to " + String(jobNumber));
+        //         Serial.println("going to " + String(jobNumber));
       }
     }
 
@@ -245,6 +350,61 @@ void setup()
   Serial.begin(115200);
   delay(10);
 
+  Serial.println(String("In setup: ") + Version);
+
+  Serial.println();
+  Serial.println();
+  Serial.print("MAC: ");
+  Serial.println(WiFi.macAddress());
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  Serial.print("WIFI status = ");
+  Serial.println(WiFi.getMode());
+  WiFi.disconnect(true);
+  delay(1000);
+  WiFi.mode(WIFI_STA);
+  delay(1000);
+  Serial.print("WIFI status = ");
+  Serial.println(WiFi.getMode());
+  // End silly stuff !!!
+  WiFi.begin(ssid, password);
+
+  int count = 0;
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    yield();
+    Serial.print(".");
+    count++;
+    if (count > 10)
+    {
+      WiFi.disconnect(true);
+      delay(1000);
+      WiFi.mode(WIFI_STA);
+      delay(1000);
+      WiFi.begin(ssid, password);
+      count = 0;
+    }
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+
+  server.begin();
+  Serial.println("Server started");
+
+  // Print the IP address
+  Serial.print("Use this IP to connect: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", handleRoot);
+  server.on("/status", handleStatus);
+  server.on("/open", handleOpen);
+  server.on("/close", handleClose);
+
+  server.onNotFound(handleNotFound);
+
+  pinMode(2, OUTPUT);
   pinMode(limitOpenPin[0], INPUT);
   pinMode(limitOpenPin[1], INPUT);
   pinMode(dirPin[0], OUTPUT);
@@ -258,13 +418,13 @@ void setup()
   setDirection(1);
 
   // Wait about 3 seconds for input to go into test mode
-  int count = 6;
+  count = 6;
   while (!Serial.available() && (count-- > 0))
   {
     delay(500);
   }
 
-  if (Serial.available())
+  if (!testMode && Serial.available())
   {
     testMode = true;
   }
@@ -285,9 +445,8 @@ void handleJoystick()
   if (counter++ % 3000 == 0)
   {
     // Serial.println(String("JS: ") + String(upDown) + String(" ") + String(leftRight));
-    // Serial.println(String("ST: ") + String(steps[0]) + String("/") + String(steps[1]));
+    //     Serial.println(String("ST: ") + String(steps[0]) + String("/") + String(steps[1]));
   }
-
   if (upDown > upperLimit)
   {
     if (position[0] != OPENED)
@@ -341,6 +500,26 @@ void doLive()
   handleJoystick();
   moveDoor(0);
   moveDoor(1);
+  server.handleClient();
+}
+
+void testLimit(int door)
+{
+  Serial.println("Testing limit: door " + String(door));
+  while (true)
+  {
+    if (isLimitSwitchOpen(door))
+    {
+      Serial.println("open " + String(limitOpenPin[door]));
+      digitalWrite(2, HIGH);
+    }
+    else
+    {
+      Serial.println("closed " + String(limitOpenPin[door]));
+      digitalWrite(2, LOW);
+    }
+    delay(1000);
+  }
 }
 
 void loop()
