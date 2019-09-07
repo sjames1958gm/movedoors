@@ -80,6 +80,13 @@ void handleRoot()
   server.send(200, "text/plain", String("ESP32: ") + String(Version));
 }
 
+void handleStop()
+{
+  state[0] = state[1] = STOPPED;
+  backingOff[0] = backingOff[1] = false;
+  server.send(200, "text/plain", displayStatus());
+}
+
 void handleStatus()
 {
   server.send(200, "text/plain", displayStatus());
@@ -401,6 +408,7 @@ void setup()
   server.on("/status", handleStatus);
   server.on("/open", handleOpen);
   server.on("/close", handleClose);
+  server.on("/stop", handleStop);
 
   server.onNotFound(handleNotFound);
 
@@ -433,6 +441,16 @@ void setup()
     // Live mode start by opening the doors
     state[0] = state[1] = MOVING;
     opening[0] = opening[1] = true;
+    for (int door = 0; door < 2; door++)
+    {
+      if (isLimitSwitchOpen(door))
+      {
+        opening[door] = false;
+        setDirection(door);
+        Serial.println("Backing off");
+        backingOff[door] = true;
+      }
+    }
   }
 }
 
