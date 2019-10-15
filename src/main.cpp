@@ -63,7 +63,7 @@ int steps[2] = {0, 0};
 
 // rate of travel (inverse)
 int rates[] = {8, 6, 4, 4, 2, 2, 1, 1, 1, 1};
-int speed = 25;
+int speed = 40;
 
 String displayStatus();
 String openDoors();
@@ -218,6 +218,7 @@ void moveDoor(int door)
         if (steps[door] <= 0)
         {
           opening[door] = false;
+          setDirection(door);
           stopDoor(door);
           position[door] = OPENED;
         }
@@ -226,6 +227,7 @@ void moveDoor(int door)
     else if (steps[door] > stepLimit[door])
     {
       opening[door] = true;
+      setDirection(door);
       stopDoor(door);
       position[door] = CLOSED;
     }
@@ -428,7 +430,7 @@ void loop()
 {
   // read sensor
   // transition between moving and stopped
-  handleJoystick();
+  // handleJoystick();
   moveDoor(0);
   moveDoor(1);
   server.handleClient();
