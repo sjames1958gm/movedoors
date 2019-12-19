@@ -2,9 +2,9 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
-String Version("Dec 15 2019");
+String Version("Dec 18 2019");
 
-#define HOME 1
+// #define HOME 1
 
 #ifdef HOME
 // Set static IP to match Bill's network
@@ -470,7 +470,7 @@ void setup()
 
   homeDoor(0);
   homeDoor(1);
-}
+8}
 
 void loop()
 {
