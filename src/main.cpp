@@ -523,9 +523,6 @@ void setup()
 
 void loop()
 {
-  // read sensor
-  // transition between moving and stopped
-  // handleJoystick();
   if (isCloseButtonPressed())
   {
     Serial.println("close button pressed, " + String(millis()));
