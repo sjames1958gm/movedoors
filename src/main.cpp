@@ -2,9 +2,9 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
-String Version("Dec 15 2019");
+String Version("Jun 12, 2020");
 
-#define HOME 1
+// #define HOME 1
 
 #ifdef HOME
 // Set static IP to match Bill's network
@@ -31,7 +31,9 @@ const int STOPPED = 0;
 const int MOVING = 1;
 
 const int MOTOR_ON = 0;
+const int MOTOR_OFF_SETTING = LOW;
 const int MOTOR_OFF = 1;
+const int MOTOR_ON_SETTING = HIGH;
 
 const int OPENED = 0;
 const int CLOSED = 1;
@@ -43,6 +45,7 @@ bool opening[2] = {true, true};
 bool homing[2] = {true, true};
 bool backingOff[2] = {false, false};
 bool motorState[2] = {MOTOR_OFF, MOTOR_OFF};
+int startDelay[2] = {0, 0};
 
 // PWM pins and values for opening / closing
 // int pulsePin[2] = {9, 10};
@@ -54,6 +57,8 @@ int dirPin[2] = {25, 26};
 // Limit switch read pins
 int limitOpenPin[2] = {34, 35};
 int relayPin[2] = {16, 17};
+int closeButtonPin = 4;
+int openButtonPin = 5;
 // joystick pins
 // int upDownPin = 14;
 // int leftRightPin = 27;
@@ -117,26 +122,30 @@ String displayStatus()
     status += "\n";
   }
 
-  Serial.println(status);
+  Serial.println(String(millis()) + String(":") + status);
   return status;
 }
 
 void stopDoor(int door)
 {
-  Serial.println(doorName[door] + String("Position: ") + String(steps[door]));
+  Serial.println(String(millis()) + String(":") + String(" Stop Door: ") + doorName[door] + String(" Position: ") + String(steps[door]));
   state[door] = STOPPED;
 }
 
 void stopMotor(int door)
 {
+  // Serial.println(String(millis()) + String(":") + String(" Stop Motor: ") + doorName[door] + String(" Position: ") + String(steps[door]));
   motorState[door] = MOTOR_OFF;
-  digitalWrite(relayPin[door], HIGH);
+  digitalWrite(relayPin[door], MOTOR_OFF_SETTING);
 }
 
 void startMotor(int door)
 {
+  Serial.println(String(millis()) + String(":") + String(" Start Motor: ") + doorName[door] + String(" Position: ") + String(steps[door]));
   motorState[door] = MOTOR_ON;
-  digitalWrite(relayPin[door], LOW);
+  digitalWrite(relayPin[door], MOTOR_ON_SETTING);
+  auto t = millis();
+  startDelay[door] = t + 750;
 }
 
 void setDirection(int door)
@@ -158,9 +167,19 @@ bool isLimitSwitchOpen(int door)
   return digitalRead(limitOpenPin[door]) == LOW;
 }
 
+bool isCloseButtonPressed()
+{
+  return digitalRead(closeButtonPin) == LOW;
+}
+
+bool isOpenButtonPressed()
+{
+  return digitalRead(openButtonPin) == LOW;
+}
+
 void homeDoor(int door)
 {
-  startMotor(door);
+  // startMotor(door);
   state[door] = MOVING;
   homing[door] = true;
 
@@ -215,7 +234,21 @@ void moveDoor(int door)
 {
   if (state[door] == MOVING)
   {
-    startMotor(door);
+    if (motorState[door] != MOTOR_ON)
+    {
+      startMotor(door);
+    }
+
+    auto t = millis();
+    if (startDelay[door] > t)
+    {
+      // Serial.println(String("start delay") + String(startDelay[door] - t));
+      return;
+    }
+    else
+    {
+      startDelay[door] = 0;
+    }
 
     position[door] = AJAR;
     digitalWrite(pulsePin[door], HIGH);
@@ -290,7 +323,7 @@ void handleStatus()
   server.send(200, "text/plain", displayStatus());
 }
 
-void handleOpen()
+void doOpen()
 {
   if (position[0] != OPENED)
   {
@@ -298,11 +331,18 @@ void handleOpen()
     state[0] = state[1] = MOVING;
     startMotor(0);
     startMotor(1);
+    setDirection(0);
+    setDirection(1);
   }
+}
+
+void handleOpen()
+{
+  doOpen();
   server.send(200, "text/plain", displayStatus());
 }
 
-void handleClose()
+void doClose()
 {
   if (position[0] != CLOSED)
   {
@@ -310,7 +350,14 @@ void handleClose()
     state[0] = state[1] = MOVING;
     startMotor(0);
     startMotor(1);
+    setDirection(0);
+    setDirection(1);
   }
+}
+
+void handleClose()
+{
+  doClose();
   server.send(200, "text/plain", displayStatus());
 }
 
@@ -453,9 +500,11 @@ void setup()
 
   server.onNotFound(handleNotFound);
 
-  pinMode(2, OUTPUT);
+  // pinMode(2, OUTPUT);
   pinMode(limitOpenPin[0], INPUT);
   pinMode(limitOpenPin[1], INPUT);
+  pinMode(openButtonPin, INPUT_PULLUP);
+  pinMode(closeButtonPin, INPUT_PULLUP);
   pinMode(dirPin[0], OUTPUT);
   pinMode(dirPin[1], OUTPUT);
   pinMode(relayPin[0], OUTPUT);
@@ -477,6 +526,17 @@ void loop()
   // read sensor
   // transition between moving and stopped
   // handleJoystick();
+  if (isCloseButtonPressed())
+  {
+    Serial.println("close button pressed, " + String(millis()));
+    doClose();
+  }
+  else if (isOpenButtonPressed())
+  {
+    Serial.println("open button pressed, " + String(millis()));
+    doOpen();
+  }
+
   moveDoor(0);
   moveDoor(1);
   server.handleClient();
