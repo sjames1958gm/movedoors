@@ -2,11 +2,12 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
-String Version("Sep 8 2019");
+String Version("Jun 12, 2020");
 
 // #define HOME 1
 
 #ifdef HOME
+// Set static IP to match Bill's network
 const char *ssid = "goofmeisters";
 const char *password = "mineshaftgap";
 // Set your Static IP address
@@ -29,6 +30,11 @@ String doorName[2] = {"right", "left"};
 const int STOPPED = 0;
 const int MOVING = 1;
 
+const int MOTOR_ON = 0;
+const int MOTOR_OFF_SETTING = LOW;
+const int MOTOR_OFF = 1;
+const int MOTOR_ON_SETTING = HIGH;
+
 const int OPENED = 0;
 const int CLOSED = 1;
 const int AJAR = 2;
@@ -38,6 +44,8 @@ int state[2] = {STOPPED, STOPPED};
 bool opening[2] = {true, true};
 bool homing[2] = {true, true};
 bool backingOff[2] = {false, false};
+bool motorState[2] = {MOTOR_OFF, MOTOR_OFF};
+int startDelay[2] = {0, 0};
 
 // PWM pins and values for opening / closing
 // int pulsePin[2] = {9, 10};
@@ -48,6 +56,9 @@ int doorClosing[2] = {LOW, HIGH};
 int dirPin[2] = {25, 26};
 // Limit switch read pins
 int limitOpenPin[2] = {34, 35};
+int relayPin[2] = {16, 17};
+int closeButtonPin = 4;
+int openButtonPin = 5;
 // joystick pins
 // int upDownPin = 14;
 // int leftRightPin = 27;
@@ -83,29 +94,58 @@ String positionToString(int position)
   return String("???");
 }
 
+String motorStateToString(int state)
+{
+  switch (state)
+  {
+  case MOTOR_OFF:
+    return "MOTOR OFF";
+  case MOTOR_ON:
+    return "MOTOR ON";
+  }
+  return "MOTOR_???";
+}
+
 String displayStatus()
 {
   String status = String("S/W Version: ") + Version + "\n";
 
-  for (int i = 0; i < 2; i++)
+  for (int door = 0; door < 2; door++)
   {
-    status += doorName[i];
-    status += String(" is ") + String(state[i] == MOVING ? "MOVING" : "STOPPED");
-    status += String(", ") + String(positionToString(position[i]));
-    status += String(", ") + String(opening[i] ? "OPENING" : "CLOSING");
-    status += String(", Steps: ") + String(steps[i]);
-    status += homing[i] ? ", Homing" : "";
+    status += doorName[door];
+    status += String(" is ") + String(state[door] == MOVING ? "MOVING" : "STOPPED");
+    status += String(", ") + String(positionToString(position[door]));
+    status += String(", ") + String(opening[door] ? "OPENING" : "CLOSING");
+    status += String(", ") + String(motorStateToString(motorState[door]));
+    status += String(", Steps: ") + String(steps[door]);
+    status += homing[door] ? ", Homing" : "";
     status += "\n";
   }
 
-  Serial.println(status);
+  Serial.println(String(millis()) + String(":") + status);
   return status;
 }
 
 void stopDoor(int door)
 {
-  Serial.println(doorName[door] + String("Position: ") + String(steps[door]));
+  Serial.println(String(millis()) + String(":") + String(" Stop Door: ") + doorName[door] + String(" Position: ") + String(steps[door]));
   state[door] = STOPPED;
+}
+
+void stopMotor(int door)
+{
+  // Serial.println(String(millis()) + String(":") + String(" Stop Motor: ") + doorName[door] + String(" Position: ") + String(steps[door]));
+  motorState[door] = MOTOR_OFF;
+  digitalWrite(relayPin[door], MOTOR_OFF_SETTING);
+}
+
+void startMotor(int door)
+{
+  Serial.println(String(millis()) + String(":") + String(" Start Motor: ") + doorName[door] + String(" Position: ") + String(steps[door]));
+  motorState[door] = MOTOR_ON;
+  digitalWrite(relayPin[door], MOTOR_ON_SETTING);
+  auto t = millis();
+  startDelay[door] = t + 750;
 }
 
 void setDirection(int door)
@@ -127,8 +167,19 @@ bool isLimitSwitchOpen(int door)
   return digitalRead(limitOpenPin[door]) == LOW;
 }
 
+bool isCloseButtonPressed()
+{
+  return digitalRead(closeButtonPin) == LOW;
+}
+
+bool isOpenButtonPressed()
+{
+  return digitalRead(openButtonPin) == LOW;
+}
+
 void homeDoor(int door)
 {
+  // startMotor(door);
   state[door] = MOVING;
   homing[door] = true;
 
@@ -183,6 +234,22 @@ void moveDoor(int door)
 {
   if (state[door] == MOVING)
   {
+    if (motorState[door] != MOTOR_ON)
+    {
+      startMotor(door);
+    }
+
+    auto t = millis();
+    if (startDelay[door] > t)
+    {
+      // Serial.println(String("start delay") + String(startDelay[door] - t));
+      return;
+    }
+    else
+    {
+      startDelay[door] = 0;
+    }
+
     position[door] = AJAR;
     digitalWrite(pulsePin[door], HIGH);
     delayMicroseconds(getSpeed(door));
@@ -197,6 +264,7 @@ void moveDoor(int door)
       {
         Serial.println("Backing off complete");
         stopDoor(door);
+        stopMotor(door);
         position[door] = OPENED;
         // reset position after backing off
         steps[door] = 0;
@@ -220,6 +288,7 @@ void moveDoor(int door)
           opening[door] = false;
           setDirection(door);
           stopDoor(door);
+          stopMotor(door);
           position[door] = OPENED;
         }
       }
@@ -243,6 +312,9 @@ void handleStop()
 {
   state[0] = state[1] = STOPPED;
   backingOff[0] = backingOff[1] = false;
+  stopMotor(0);
+  stopMotor(1);
+
   server.send(200, "text/plain", displayStatus());
 }
 
@@ -251,23 +323,41 @@ void handleStatus()
   server.send(200, "text/plain", displayStatus());
 }
 
-void handleOpen()
+void doOpen()
 {
   if (position[0] != OPENED)
   {
     opening[0] = opening[1] = true;
     state[0] = state[1] = MOVING;
+    startMotor(0);
+    startMotor(1);
+    setDirection(0);
+    setDirection(1);
   }
+}
+
+void handleOpen()
+{
+  doOpen();
   server.send(200, "text/plain", displayStatus());
 }
 
-void handleClose()
+void doClose()
 {
   if (position[0] != CLOSED)
   {
     opening[0] = opening[1] = false;
     state[0] = state[1] = MOVING;
+    startMotor(0);
+    startMotor(1);
+    setDirection(0);
+    setDirection(1);
   }
+}
+
+void handleClose()
+{
+  doClose();
   server.send(200, "text/plain", displayStatus());
 }
 
@@ -283,6 +373,63 @@ void handleNotFound()
 {
   server.send(404, "application/json", "{\"message\": \"Not Found\"}");
 }
+
+// void handleJoystick()
+// {
+//   static int counter = 0;
+//   const int upDown = analogRead(upDownPin);
+//   const int leftRight = analogRead(leftRightPin);
+
+//   if (counter++ % 3000 == 0)
+//   {
+//     // Serial.println(String("JS: ") + String(upDown) + String(" ") + String(leftRight));
+//     //     Serial.println(String("ST: ") + String(steps[0]) + String("/") + String(steps[1]));
+//   }
+//   if (upDown > upperLimit)
+//   {
+//     if (position[0] != OPENED)
+//     {
+//       opening[0] = opening[1] = true;
+//       state[0] = state[1] = MOVING;
+//       leftRightMotion = false;
+//     }
+//   }
+//   else if (upDown < lowerLimit)
+//   {
+//     if (position[1] != CLOSED)
+//     {
+//       opening[0] = opening[1] = false;
+//       state[0] = state[1] = MOVING;
+//       leftRightMotion = false;
+//     }
+//   }
+//   else if (leftRight > upperLimit)
+//   {
+//     if (position[0] != OPENED)
+//     {
+//       opening[0] = opening[1] = true;
+//       state[0] = state[1] = MOVING;
+//       leftRightMotion = true;
+//     }
+//   }
+//   else if (leftRight < lowerLimit)
+//   {
+//     if (position[0] != CLOSED)
+//     {
+//       opening[0] = opening[1] = false;
+//       state[0] = state[1] = MOVING;
+//       leftRightMotion = true;
+//     }
+//   }
+//   else if (leftRightMotion)
+//   {
+//     state[0] = state[1] = STOPPED;
+//     leftRightMotion = false;
+//   }
+
+//   setDirection(0);
+//   setDirection(1);
+// }
 
 void setup()
 {
@@ -307,13 +454,14 @@ void setup()
   Serial.println(ssid);
   Serial.print("WIFI status = ");
   Serial.println(WiFi.getMode());
+
   WiFi.disconnect(true);
   delay(1000);
   WiFi.mode(WIFI_STA);
   delay(1000);
   Serial.print("WIFI status = ");
   Serial.println(WiFi.getMode());
-  // End silly stuff !!!
+
   WiFi.begin(ssid, password);
 
   int count = 0;
@@ -352,11 +500,15 @@ void setup()
 
   server.onNotFound(handleNotFound);
 
-  pinMode(2, OUTPUT);
+  // pinMode(2, OUTPUT);
   pinMode(limitOpenPin[0], INPUT);
   pinMode(limitOpenPin[1], INPUT);
+  pinMode(openButtonPin, INPUT_PULLUP);
+  pinMode(closeButtonPin, INPUT_PULLUP);
   pinMode(dirPin[0], OUTPUT);
   pinMode(dirPin[1], OUTPUT);
+  pinMode(relayPin[0], OUTPUT);
+  pinMode(relayPin[1], OUTPUT);
   pinMode(pulsePin[0], OUTPUT);
   pinMode(pulsePin[1], OUTPUT);
   digitalWrite(pulsePin[0], LOW);
@@ -369,68 +521,22 @@ void setup()
   homeDoor(1);
 }
 
-void handleJoystick()
-{
-  static int counter = 0;
-  const int upDown = analogRead(upDownPin);
-  const int leftRight = analogRead(leftRightPin);
-
-  if (counter++ % 3000 == 0)
-  {
-    // Serial.println(String("JS: ") + String(upDown) + String(" ") + String(leftRight));
-    //     Serial.println(String("ST: ") + String(steps[0]) + String("/") + String(steps[1]));
-  }
-  if (upDown > upperLimit)
-  {
-    if (position[0] != OPENED)
-    {
-      opening[0] = opening[1] = true;
-      state[0] = state[1] = MOVING;
-      leftRightMotion = false;
-    }
-  }
-  else if (upDown < lowerLimit)
-  {
-    if (position[1] != CLOSED)
-    {
-      opening[0] = opening[1] = false;
-      state[0] = state[1] = MOVING;
-      leftRightMotion = false;
-    }
-  }
-  else if (leftRight > upperLimit)
-  {
-    if (position[0] != OPENED)
-    {
-      opening[0] = opening[1] = true;
-      state[0] = state[1] = MOVING;
-      leftRightMotion = true;
-    }
-  }
-  else if (leftRight < lowerLimit)
-  {
-    if (position[0] != CLOSED)
-    {
-      opening[0] = opening[1] = false;
-      state[0] = state[1] = MOVING;
-      leftRightMotion = true;
-    }
-  }
-  else if (leftRightMotion)
-  {
-    state[0] = state[1] = STOPPED;
-    leftRightMotion = false;
-  }
-
-  setDirection(0);
-  setDirection(1);
-}
-
 void loop()
 {
   // read sensor
   // transition between moving and stopped
   // handleJoystick();
+  if (isCloseButtonPressed())
+  {
+    Serial.println("close button pressed, " + String(millis()));
+    doClose();
+  }
+  else if (isOpenButtonPressed())
+  {
+    Serial.println("open button pressed, " + String(millis()));
+    doOpen();
+  }
+
   moveDoor(0);
   moveDoor(1);
   server.handleClient();
